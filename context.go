@@ -43,6 +43,14 @@ type ContextOption interface {
 	apply(*contextOptions)
 }
 
+type CompiledScript struct {
+	source string
+	origin string
+	data *interface{}
+	length int
+	owned bool
+}
+
 // NewContext creates a new JavaScript context; if no Isolate is passed as a
 // ContextOption than a new Isolate will be created.
 func NewContext(opt ...ContextOption) *Context {
@@ -82,6 +90,35 @@ func (c *Context) Isolate() *Isolate {
 	return c.iso
 }
 
+
+// CompileScript compiles a script that can be used in any isolate
+func (c *Context) CompileScript(source string, origin string) (*CompiledScript, error) {
+	cSource := C.CString(source)
+	cOrigin := C.CString(origin)
+	defer C.free(unsafe.Pointer(cSource))
+	defer C.free(unsafe.Pointer(cOrigin))
+
+	rtn := C.CompileScript(c.ptr, cSource, cOrigin)
+
+	if rtn.data == nil {
+		return nil, newJSError(rtn.error)
+	}
+
+	// fmt.Printf("owned: %v", rtn.owned)
+
+	return &CompiledScript{
+		source: source,
+		origin: origin,
+		data: (*interface{})(unsafe.Pointer(rtn.data)),
+		length: int(rtn.length),
+	}, nil
+}
+
+func (c *Context) CompileScriptFree(compiledScript *CompiledScript) {
+	C.CompiledScriptFree(unsafe.Pointer(compiledScript.data))
+}
+
+
 // RunScript executes the source JavaScript; origin or filename provides a
 // reference for the script and used in the stack trace if there is an error.
 // error will be of type `JSError` of not nil.
@@ -91,7 +128,22 @@ func (c *Context) RunScript(source string, origin string) (*Value, error) {
 	defer C.free(unsafe.Pointer(cSource))
 	defer C.free(unsafe.Pointer(cOrigin))
 
-	rtn := C.RunScript(c.ptr, cSource, cOrigin)
+	rtn := C.RunScript(c.ptr, cSource, cOrigin, nil, 0)
+
+	return valueResult(c, rtn)
+}
+
+// RunCachedScript executes the source JavaScript; origin or filename provides a
+// reference for the script and used in the stack trace if there is an error.
+// cachedEntry contains the compiled version of the script
+// error will be of type `JSError` of not nil.
+func (c *Context) RunCachedScript(compiledScript *CompiledScript) (*Value, error) {
+	cSource := C.CString(compiledScript.source)
+	cOrigin := C.CString(compiledScript.origin)
+	defer C.free(unsafe.Pointer(cSource))
+	defer C.free(unsafe.Pointer(cOrigin))
+
+	rtn := C.RunScript(c.ptr, cSource, cOrigin, unsafe.Pointer(compiledScript.data), C.int(compiledScript.length))
 
 	return valueResult(c, rtn)
 }

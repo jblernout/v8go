@@ -82,6 +82,12 @@ typedef struct {
 } RtnValue;
 
 typedef struct {
+  void*    data;
+  int      length;
+  RtnError error;
+} RtnCompiledScript;
+
+typedef struct {
   const char* string;
   RtnError error;
 } RtnString;
@@ -127,10 +133,15 @@ extern ContextPtr NewContext(IsolatePtr iso_ptr,
 extern void ContextFree(ContextPtr ptr);
 extern RtnValue RunScript(ContextPtr ctx_ptr,
                           const char* source,
-                          const char* origin);
+                          const char* origin,
+                          void* compiled_script,
+                          int length);
 extern RtnValue JSONParse(ContextPtr ctx_ptr, const char* str);
 const char* JSONStringify(ContextPtr ctx_ptr, ValuePtr val_ptr);
 extern ValuePtr ContextGlobal(ContextPtr ctx_ptr);
+
+RtnCompiledScript CompileScript(ContextPtr ctx, const char* source, const char* origin);
+void CompiledScriptFree(void* value);
 
 extern void TemplateFreeWrapper(TemplatePtr ptr);
 extern void TemplateSetValue(TemplatePtr ptr,

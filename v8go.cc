@@ -528,7 +528,7 @@ void ContextFree(ContextPtr ctx) {
   delete ctx;
 }
 
-RtnValue RunScript(ContextPtr ctx, const char* source, const char* origin) {
+RtnValue RunScript(ContextPtr ctx, const char* source, const char* origin, void* compiled_script, int length) {
   LOCAL_CONTEXT(ctx);
 
   RtnValue rtn = {nullptr, nullptr};
@@ -545,15 +545,44 @@ RtnValue RunScript(ContextPtr ctx, const char* source, const char* origin) {
 
   ScriptOrigin script_origin(ogn);
   Local<Script> script;
-  if (!Script::Compile(local_ctx, src, &script_origin).ToLocal(&script)) {
-    rtn.error = ExceptionError(try_catch, iso, local_ctx);
-    return rtn;
+  ScriptCompiler::CachedData *cached_data = nullptr;
+
+  if (compiled_script == nullptr) {
+    if (!Script::Compile(local_ctx, src, &script_origin).ToLocal(&script)) {
+      rtn.error = ExceptionError(try_catch, iso, local_ctx);
+      return rtn;
+    }
+  } else {
+
+    uint8_t* data_copy = new uint8_t[length];
+    memcpy(data_copy, compiled_script, length);
+    ScriptCompiler::CachedData *cached_data = new ScriptCompiler::CachedData(data_copy, length, ScriptCompiler::CachedData::BufferOwned);
+
+    ScriptCompiler::Source sc_source(src, script_origin, cached_data);
+    if (!ScriptCompiler::Compile(local_ctx, &sc_source, ScriptCompiler::CompileOptions::kConsumeCodeCache).ToLocal(&script)) {
+      rtn.error = ExceptionError(try_catch, iso, local_ctx);
+      return rtn;
+    }
+
+    if (cached_data->rejected) {
+        rtn.error = {nullptr, nullptr, nullptr};
+        rtn.error.msg = "cached data rejected!";
+        return rtn;
+    }
   }
+
   Local<Value> result;
-  if (!script->Run(local_ctx).ToLocal(&result)) {
+  bool ret = script->Run(local_ctx).ToLocal(&result);
+
+  if (cached_data != nullptr) {
+    delete cached_data;
+  }
+
+  if (!ret) {
     rtn.error = ExceptionError(try_catch, iso, local_ctx);
     return rtn;
   }
+
   m_value* val = new m_value;
   val->iso = iso;
   val->ctx = ctx;
@@ -1484,4 +1513,51 @@ const char* Version() {
 void SetFlags(const char* flags) {
   V8::SetFlagsFromString(flags);
 }
+}
+
+/********** Compile **********/
+
+RtnCompiledScript CompileScript(ContextPtr ctx, const char* source, const char* origin) {
+
+  LOCAL_CONTEXT(ctx);
+
+  RtnCompiledScript rtn = {nullptr, false, nullptr};
+
+  MaybeLocal<String> maybeSrc = String::NewFromUtf8(iso, source, NewStringType::kNormal);
+  MaybeLocal<String> maybeOgn = String::NewFromUtf8(iso, origin, NewStringType::kNormal);
+  Local<String> src, ogn;
+  if (!maybeSrc.ToLocal(&src) || !maybeOgn.ToLocal(&ogn)) {
+    rtn.error = ExceptionError(try_catch, iso, local_ctx);
+    return rtn;
+  }
+
+  ScriptCompiler::Source script_source(src, ScriptOrigin(ogn), nullptr);
+  Local<UnboundScript>   unbound_script;
+
+  MaybeLocal<UnboundScript> maybe_ubd_script = ScriptCompiler::CompileUnboundScript(iso, &script_source);
+
+  if (!maybe_ubd_script.ToLocal(&unbound_script)) {
+    rtn.error = ExceptionError(try_catch, iso, local_ctx);
+    return rtn;
+  }
+
+  ScriptCompiler::CachedData* cached_data = ScriptCompiler::CreateCodeCache(unbound_script);
+  if (cached_data == nullptr || cached_data->length == 0) {
+    rtn.error = {nullptr, nullptr, nullptr};
+    rtn.error.msg = "failed to create code cache from unbound script";
+    return rtn;
+  }
+
+  // Copy cached data
+  rtn.data = new uint8_t[cached_data->length];
+  memcpy(rtn.data, cached_data->data, cached_data->length);
+  rtn.length = cached_data->length;
+
+  delete cached_data;
+
+  return rtn;
+}
+
+void CompiledScriptFree(void* value) {
+    delete[] (uint8_t*)value;
 }
