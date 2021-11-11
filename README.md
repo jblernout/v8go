@@ -84,6 +84,28 @@ if err != nil {
 }
 ```
 
+### Pre-compile context-independent scripts to speed-up execution times
+
+For scripts that are large or are repeatedly run in different contexts,
+it is beneficial to compile the script once and used the cached data from that
+compilation to avoid recompiling every time you want to run it.
+
+```go
+source := "const multiply = (a, b) => a * b"
+iso1 := v8.NewIsolate() // creates a new JavaScript VM
+ctx1 := v8.NewContext() // new context within the VM
+script1, _ := iso1.CompileUnboundScript(source, "math.js", v8.CompileOptions{}) // compile script to get cached data
+val, _ := script1.Run(ctx1)
+
+cachedData := script1.CreateCodeCache()
+
+iso2 := v8.NewIsolate() // create a new JavaScript VM
+ctx2 := v8.NewContext(iso2) // new context within the VM
+
+script2, _ := iso2.CompileUnboundScript(source, "math.js", v8.CompileOptions{CachedData: cachedData}) // compile script in new isolate with cached data
+val, _ = script2.Run(ctx2)
+```
+
 ### Terminate long running scripts
 
 ```go
@@ -240,6 +262,37 @@ standard output being fully buffered.
 
 A simple way to avoid this problem is to flush the standard output stream after printing with the `fflush(stdout);` statement.
 Not relying on the flushing at exit can also help ensure the output is printed before a crash.
+
+### Local leak checking
+
+Leak checking is automatically done in CI, but it can be useful to do locally to debug leaks.
+
+Leak checking is done using the [Leak Sanitizer](https://clang.llvm.org/docs/LeakSanitizer.html) which
+is a part of LLVM. As such, compiling with clang as the C/C++ compiler seems to produce more complete
+backtraces (unfortunately still only of the system stack at the time of writing).
+
+For instance, on a Debian-based Linux system, you can use `sudo apt-get install clang-12` to install a
+recent version of clang.  Then CC and CXX environment variables are needed to use that compiler. With
+that compiler, the tests can be run as follows
+
+```
+CC=clang-12 CXX=clang++-12 go test -c --tags leakcheck && ./v8go.test
+```
+
+The separate compile and link commands are currently needed to get line numbers in the backtrace.
+
+On macOS, leak checking isn't available with the version of clang that comes with Xcode, so a separate
+compiler installation is needed.  For example, with homebrew, `brew install llvm` will install a version
+of clang with support for this. The ASAN_OPTIONS environment variable will also be needed to run the code
+with leak checking enabled, since it isn't enabled by default on macOS. E.g. with the homebrew
+installation of llvm, the tests can be run with
+
+```
+CXX=/usr/local/opt/llvm/bin/clang++ CC=/usr/local/opt/llvm/bin/clang go test -c --tags leakcheck -ldflags=-compressdwarf=false
+ASAN_OPTIONS=detect_leaks=1 ./v8go.test
+```
+
+The `-ldflags=-compressdwarf=false` is currently (with clang 13) needed to get line numbers in the backtrace.
 
 ### Formatting
 
