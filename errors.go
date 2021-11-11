@@ -35,7 +35,7 @@ func newJSError(rtnErr C.RtnError) error {
 }
 
 func (e *JSError) Error() string {
-	return fmt.Sprintf("%s: %s (%s)", e.Message, e.Location, e.StackTrace)
+	return e.Message
 }
 
 // Format implements the fmt.Formatter interface to provide a custom formatter
